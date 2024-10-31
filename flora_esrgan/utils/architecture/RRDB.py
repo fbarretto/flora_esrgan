@@ -8,7 +8,9 @@ from collections import OrderedDict
 
 import torch
 import torch.nn as nn
-import utils.architecture.block as B
+
+from flora_esrgan.utils.architecture import block as B
+
 
 
 # Borrowed from https://github.com/rlaphoenix/VSGAN/blob/master/vsgan/archs/ESRGAN.py
@@ -98,7 +100,7 @@ class RRDBNet(nn.Module):
             self.shuffle_factor = None
 
         upsample_block = {
-            "upconv": B.upconv_block,
+            "upconv": block.upconv_block,
             "pixel_shuffle": B.pixelshuffle_block,
         }.get(self.upsampler)
         if upsample_block is None:
