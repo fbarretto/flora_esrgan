@@ -9,7 +9,7 @@ from collections import OrderedDict
 import torch
 import torch.nn as nn
 
-from flora_esrgan.utils.architecture import block as B
+from . import block as B
 
 
 
