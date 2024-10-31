@@ -1,2 +1,2 @@
-from utils import dataops
-from utils import net_interp
+from .utils import dataops
+from .utils import net_interp
