@@ -1,5 +1,6 @@
-opencv_python
-numpy
-torch
-rich
-typer
+opencv-python==4.10.0.84
+numpy==2.1.2
+torch==2.4.1+cu118
+torchaudio==2.4.1+cu118
+torchvision==0.19.1+cu118
+rich==13.9.3
