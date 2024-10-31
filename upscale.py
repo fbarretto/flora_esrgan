@@ -11,7 +11,6 @@ from typing import List, Optional, Union
 import cv2
 import numpy as np
 import torch
-import typer
 from rich import print
 from rich.logging import RichHandler
 from rich.progress import BarColumn, Progress, TaskID, TimeRemainingColumn
@@ -20,6 +19,8 @@ import utils.dataops as ops
 from utils.architecture.RRDB import RRDBNet as ESRGAN
 from utils.architecture.SPSR import SPSRNet as SPSR
 from utils.architecture.SRVGG import SRVGGNetCompact as RealESRGANv2
+
+from PIL import Image
 
 
 class SeamlessOptions(str, Enum):
@@ -38,11 +39,7 @@ class AlphaOptions(str, Enum):
 
 class Upscale:
     model_str: str = None
-    input: Path = None
-    output: Path = None
-    reverse: bool = None
-    skip_existing: bool = None
-    delete_input: bool = None
+    input: Image = None
     seamless: SeamlessOptions = None
     cpu: bool = None
     fp16: bool = None
@@ -70,11 +67,7 @@ class Upscale:
     def __init__(
         self,
         model: str,
-        input: Path,
-        output: Path,
-        reverse: bool = False,
-        skip_existing: bool = False,
-        delete_input: bool = False,
+        input: Image,
         seamless: Optional[SeamlessOptions] = None,
         cpu: bool = False,
         fp16: bool = False,
@@ -88,11 +81,7 @@ class Upscale:
         log: logging.Logger = logging.getLogger(),
     ) -> None:
         self.model_str = model
-        self.input = input.resolve()
-        self.output = output.resolve()
-        self.reverse = reverse
-        self.skip_existing = skip_existing
-        self.delete_input = delete_input
+        self.input = input
         self.seamless = seamless
         self.cpu = cpu
         self.fp16 = fp16
@@ -108,164 +97,71 @@ class Upscale:
             torch.set_default_tensor_type(
                 torch.HalfTensor if self.cpu else torch.cuda.HalfTensor
             )
+        
+        # Load the model so we can access the scale
+        self.load_model(self.model_str)
+
 
     def run(self) -> None:
-        model_chain = (
-            self.model_str.split("+")
-            if "+" in self.model_str
-            else self.model_str.split(">")
-        )
-
-        for idx, model in enumerate(model_chain):
-
-            interpolations = (
-                model.split("|") if "|" in self.model_str else model.split("&")
-            )
-
-            if len(interpolations) > 1:
-                for i, interpolation in enumerate(interpolations):
-                    interp_model, interp_amount = (
-                        interpolation.split("@")
-                        if "@" in interpolation
-                        else interpolation.split(":")
-                    )
-                    interp_model = self.__check_model_path(interp_model)
-                    interpolations[i] = f"{interp_model}@{interp_amount}"
-                model_chain[idx] = "&".join(interpolations)
-            else:
-                model_chain[idx] = self.__check_model_path(model)
-
-        if not self.input.exists():
-            self.log.error(f'Folder "{self.input}" does not exist.')
-            sys.exit(1)
-        elif self.input.is_file():
-            self.log.error(f'Folder "{self.input}" is a file.')
-            sys.exit(1)
-        elif self.output.is_file():
-            self.log.error(f'Folder "{self.output}" is a file.')
-            sys.exit(1)
-        elif not self.output.exists():
-            self.output.mkdir(parents=True)
-
-        print(
-            'Model{:s}: "{:s}"'.format(
-                "s" if len(model_chain) > 1 else "",
-                # ", ".join([Path(x).stem for x in model_chain]),
-                ", ".join([x for x in model_chain]),
-            )
-        )
-
-        images: List[Path] = []
-        # List of extensions: https://docs.opencv.org/4.x/d4/da8/group__imgcodecs.html#ga288b8b3da0892bd651fce07b3bbd3a56
-        # Also gif and tga which seem to be supported as well though are undocumented.
-        for ext in ["bmp", "dib", "jpeg", "jpg", "jpe", "jp2", "png", "webp", "pbm", "pgm", "ppm", "pxm", "pnm", "pfm", "sr", "ras", "tiff", "tif", "exr", "hdr", "pic", "gif", "tga"]:
-            images.extend(self.input.glob(f"**/*.{ext}"))
 
         # Store the maximum split depths for each model in the chain
         # TODO: there might be a better way of doing this but it's good enough for now
         split_depths = {}
 
-        with Progress(
-            # SpinnerColumn(),
-            "[progress.description]{task.description}",
-            BarColumn(),
-            "[progress.percentage]{task.percentage:>3.0f}%",
-            TimeRemainingColumn(),
-        ) as progress:
-            task_upscaling = progress.add_task("Upscaling", total=len(images))
-            for idx, img_path in enumerate(images, 1):
-                img_input_path_rel = img_path.relative_to(self.input)
-                output_dir = self.output.joinpath(img_input_path_rel).parent
-                img_output_path_rel = output_dir.joinpath(f"{img_path.stem}.png")
-                output_dir.mkdir(parents=True, exist_ok=True)
-                if len(model_chain) == 1:
-                    self.log.info(
-                        f'Processing {str(idx).zfill(len(str(len(images))))}: "{img_input_path_rel}"'
-                    )
-                if self.skip_existing and img_output_path_rel.is_file():
-                    self.log.warning("Already exists, skipping")
-                    if self.delete_input:
-                        img_path.unlink(missing_ok=True)
-                    progress.advance(task_upscaling)
-                    continue
-                # read image
-                # We use imdecode instead of imread to work around Unicode breakage on Windows.
-                # See https://jdhao.github.io/2019/09/11/opencv_unicode_image_path/
-                img = cv2.imdecode(np.fromfile(str(img_path.absolute()), dtype=np.uint8), cv2.IMREAD_UNCHANGED)
-                if len(img.shape) < 3:
-                    img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+        # read image
+        # We use imdecode instead of imread to work around Unicode breakage on Windows.
+        # See https://jdhao.github.io/2019/09/11/opencv_unicode_image_path/
+        # img = cv2.imdecode(np.fromfile(str(img_path.absolute()), dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+        img = np.array(self.input)
+        if len(img.shape) < 3:
+            img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
 
-                # Seamless modes
-                if self.seamless == SeamlessOptions.TILE:
-                    img = cv2.copyMakeBorder(img, 16, 16, 16, 16, cv2.BORDER_WRAP)
-                elif self.seamless == SeamlessOptions.MIRROR:
-                    img = cv2.copyMakeBorder(
-                        img, 16, 16, 16, 16, cv2.BORDER_REFLECT_101
-                    )
-                elif self.seamless == SeamlessOptions.REPLICATE:
-                    img = cv2.copyMakeBorder(img, 16, 16, 16, 16, cv2.BORDER_REPLICATE)
-                elif self.seamless == SeamlessOptions.ALPHA_PAD:
-                    img = cv2.copyMakeBorder(
-                        img, 16, 16, 16, 16, cv2.BORDER_CONSTANT, value=[0, 0, 0, 0]
-                    )
-                final_scale: int = 1
+        # Seamless modes
+        if self.seamless == SeamlessOptions.TILE:
+            img = cv2.copyMakeBorder(img, 16, 16, 16, 16, cv2.BORDER_WRAP)
+        elif self.seamless == SeamlessOptions.MIRROR:
+            img = cv2.copyMakeBorder(
+                img, 16, 16, 16, 16, cv2.BORDER_REFLECT_101
+            )
+        elif self.seamless == SeamlessOptions.REPLICATE:
+            img = cv2.copyMakeBorder(img, 16, 16, 16, 16, cv2.BORDER_REPLICATE)
+        elif self.seamless == SeamlessOptions.ALPHA_PAD:
+            img = cv2.copyMakeBorder(
+                img, 16, 16, 16, 16, cv2.BORDER_CONSTANT, value=[0, 0, 0, 0]
+            )
+        final_scale: int = 1
 
-                task_model_chain: TaskID = None
-                if len(model_chain) > 1:
-                    task_model_chain = progress.add_task(
-                        f'{str(idx).zfill(len(str(len(images))))} - "{img_input_path_rel}"',
-                        total=len(model_chain),
-                    )
-                for i, model_path in enumerate(model_chain):
+        img_height, img_width = img.shape[:2]
 
-                    img_height, img_width = img.shape[:2]
-
-                    # Load the model so we can access the scale
-                    self.load_model(model_path)
-
-                    if self.cache_max_split_depth and len(split_depths.keys()) > 0:
-                        rlt, depth = ops.auto_split_upscale(
-                            img,
-                            self.upscale,
-                            self.last_scale,
-                            max_depth=split_depths[i],
-                        )
-                    else:
-                        rlt, depth = ops.auto_split_upscale(
-                            img, self.upscale, self.last_scale
-                        )
-                        split_depths[i] = depth
-
-                    final_scale *= self.last_scale
-
-                    # This is for model chaining
-                    img = rlt.astype("uint8")
-                    if len(model_chain) > 1:
-                        progress.advance(task_model_chain)
-
-                if self.seamless:
-                    rlt = self.crop_seamless(rlt, final_scale)
-
-                # We use imencode instead of imwrite to work around Unicode breakage on Windows.
-                # See https://jdhao.github.io/2019/09/11/opencv_unicode_image_path/
-                is_success, im_buf_arr = cv2.imencode(".png", rlt)
-                if not is_success:
-                    raise Exception('cv2.imencode failure')
-                im_buf_arr.tofile(str(img_output_path_rel.absolute()))
-
-                if self.delete_input:
-                    img_path.unlink(missing_ok=True)
-
-                progress.advance(task_upscaling)
-
-    def __check_model_path(self, model_path: str) -> str:
-        if Path(model_path).is_file():
-            return model_path
-        elif Path("./models/").joinpath(model_path).is_file():
-            return str(Path("./models/").joinpath(model_path))
+        if self.cache_max_split_depth and len(split_depths.keys()) > 0:
+            rlt, depth = ops.auto_split_upscale(
+                img,
+                self.upscale,
+                self.last_scale,
+                max_depth=split_depths[0],
+            )
         else:
-            self.log.error(f'Model "{model_path}" does not exist.')
-            sys.exit(1)
+            rlt, depth = ops.auto_split_upscale(
+                img, self.upscale, self.last_scale
+            )
+            split_depths[0] = depth
+
+        final_scale *= self.last_scale
+
+        # This is for model chaining
+        img = rlt.astype("uint8")
+
+        if self.seamless:
+            rlt = self.crop_seamless(rlt, final_scale)
+
+        # We use imencode instead of imwrite to work around Unicode breakage on Windows.
+        # See https://jdhao.github.io/2019/09/11/opencv_unicode_image_path/
+        # is_success, im_buf_arr = cv2.imencode(".png", rlt)
+        # if not is_success:
+        #     raise Exception('cv2.imencode failure')
+        rlt = rlt.astype(np.uint8)  # Ensure rlt is of type uint8        
+        img_output = Image.fromarray(rlt)
+        return img_output
 
     # This code is a somewhat modified version of BlueAmulet's fork of ESRGAN by Xinntao
     def process(self, img: np.ndarray):
@@ -465,116 +361,3 @@ class Upscale:
         return img
 
 
-app = typer.Typer()
-
-
-@app.command()
-def main(
-    model: str = typer.Argument(...),
-    input: Path = typer.Option(Path("input"), "--input", "-i", help="Input folder"),
-    output: Path = typer.Option(Path("output"), "--output", "-o", help="Output folder"),
-    reverse: bool = typer.Option(False, "--reverse", "-r", help="Reverse Order"),
-    skip_existing: bool = typer.Option(
-        False,
-        "--skip-existing",
-        "-se",
-        help="Skip existing output files",
-    ),
-    delete_input: bool = typer.Option(
-        False,
-        "--delete-input",
-        "-di",
-        help="Delete input files after upscaling",
-    ),
-    seamless: SeamlessOptions = typer.Option(
-        None,
-        "--seamless",
-        "-s",
-        case_sensitive=False,
-        help="Helps seamlessly upscale an image. tile = repeating along edges. mirror = reflected along edges. replicate = extended pixels along edges. alpha_pad = extended alpha border.",
-    ),
-    cpu: bool = typer.Option(False, "--cpu", "-c", help="Use CPU instead of CUDA"),
-    fp16: bool = typer.Option(
-        False,
-        "--floating-point-16",
-        "-fp16",
-        help="Use FloatingPoint16/Halftensor type for images.",
-    ),
-    device_id: int = typer.Option(
-        0, "--device-id", "-did", help="The numerical ID of the GPU you want to use."
-    ),
-    cache_max_split_depth: bool = typer.Option(
-        False,
-        "--cache-max-split-depth",
-        "-cmsd",
-        help="Caches the maximum recursion depth used by the split/merge function. Useful only when upscaling images of the same size.",
-    ),
-    binary_alpha: bool = typer.Option(
-        False,
-        "--binary-alpha",
-        "-ba",
-        help="Whether to use a 1 bit alpha transparency channel, Useful for PSX upscaling",
-    ),
-    ternary_alpha: bool = typer.Option(
-        False,
-        "--ternary-alpha",
-        "-ta",
-        help="Whether to use a 2 bit alpha transparency channel, Useful for PSX upscaling",
-    ),
-    alpha_threshold: float = typer.Option(
-        0.5,
-        "--alpha-threshold",
-        "-at",
-        help="Only used when binary_alpha is supplied. Defines the alpha threshold for binary transparency",
-    ),
-    alpha_boundary_offset: float = typer.Option(
-        0.2,
-        "--alpha-boundary-offset",
-        "-abo",
-        help="Only used when binary_alpha is supplied. Determines the offset boundary from the alpha threshold for half transparency.",
-    ),
-    alpha_mode: AlphaOptions = typer.Option(
-        None,
-        "--alpha-mode",
-        "-am",
-        help="Type of alpha processing to use. no_alpha = is no alpha processing. bas = is BA's difference method. alpha_separately = is upscaling the alpha channel separately (like IEU). swapping = is swapping an existing channel with the alpha channel.",
-    ),
-    verbose: bool = typer.Option(
-        False,
-        "--verbose",
-        "-v",
-        help="Verbose mode",
-    ),
-):
-
-    logging.basicConfig(
-        level=logging.DEBUG if verbose else logging.WARNING,
-        format="%(message)s",
-        datefmt="[%X]",
-        handlers=[RichHandler(markup=True)],
-        # handlers=[RichHandler(markup=True, rich_tracebacks=True)],
-    )
-
-    upscale = Upscale(
-        model=model,
-        input=input,
-        output=output,
-        reverse=reverse,
-        skip_existing=skip_existing,
-        delete_input=delete_input,
-        seamless=seamless,
-        cpu=cpu,
-        fp16=fp16,
-        device_id=device_id,
-        cache_max_split_depth=cache_max_split_depth,
-        binary_alpha=binary_alpha,
-        ternary_alpha=ternary_alpha,
-        alpha_threshold=alpha_threshold,
-        alpha_boundary_offset=alpha_boundary_offset,
-        alpha_mode=alpha_mode,
-    )
-    upscale.run()
-
-
-if __name__ == "__main__":
-    app()
