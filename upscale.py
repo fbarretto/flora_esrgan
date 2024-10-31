@@ -15,10 +15,10 @@ from rich import print
 from rich.logging import RichHandler
 from rich.progress import BarColumn, Progress, TaskID, TimeRemainingColumn
 
-import flora_esrgan.utils.dataops as ops
-from .utils.architecture.RRDB import RRDBNet as ESRGAN
-from .utils.architecture.SPSR import SPSRNet as SPSR
-from .utils.architecture.SRVGG import SRVGGNetCompact as RealESRGANv2
+import utils.dataops as ops
+import utils.architecture.RRDBNet as ESRGAN
+from utils.architecture.SPSR import SPSRNet as SPSR
+from utils.architecture.SRVGG import SRVGGNetCompact as RealESRGANv2
 
 from PIL import Image
 

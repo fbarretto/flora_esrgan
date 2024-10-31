@@ -100,7 +100,7 @@ class RRDBNet(nn.Module):
             self.shuffle_factor = None
 
         upsample_block = {
-            "upconv": block.upconv_block,
+            "upconv": B.upconv_block,
             "pixel_shuffle": B.pixelshuffle_block,
         }.get(self.upsampler)
         if upsample_block is None:
