@@ -1,1 +1,1 @@
-from architecture import *
+from .architecture import *
