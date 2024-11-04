@@ -16,7 +16,7 @@ from rich.logging import RichHandler
 from rich.progress import BarColumn, Progress, TaskID, TimeRemainingColumn
 
 from .utils import dataops as ops
-import .utils.architecture.RRDBNet as ESRGAN
+from .utils.architecture import RRDBNet as ESRGAN
 from .utils.architecture.SPSR import SPSRNet as SPSR
 from .utils.architecture.SRVGG import SRVGGNetCompact as RealESRGANv2
 
