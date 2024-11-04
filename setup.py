@@ -59,7 +59,7 @@ if __name__ == '__main__':
         keywords='computer vision, pytorch, image restoration, super-resolution, esrgan',
         url='https://github.com/fbarretto/flora_esrgan',
         include_package_data=True,
-        packages=find_packages(include=['utils', 'utils.architecture']),
+        packages=find_packages(include=['flora_esrgan', 'flora_esrgan.*']),
         classifiers=[
             'Development Status :: 3 - Alpha',
             'License :: OSI Approved :: MIT License',
